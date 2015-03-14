@@ -1,0 +1,212 @@
+(load "/home/dana/C311/parenthec.ss")
+
+(define-registers expr* env* k0* v* num* c* a*)
+(define-program-counter pc)
+
+ 
+(define-union exp
+  (const n)
+  (var v)
+  (if test conseq alt)
+  (mult rand1 rand2)
+  (sub1 rand)
+  (zero rand)
+  (capture body)
+  (return vexp kexp)
+  (let vexp body)
+  (lambda body)
+  (app rator rand))
+
+(define-union kt
+  (if-k conseq alt env k0)
+  (mult-k-inner m1 k0)
+  (mult-k-outter rand2 env k0)
+  (sub1-k k0)
+  (zero-k k0)
+  (return-k vexp env)
+  (rand-k tor k0)
+  (rator-k rand env k0)
+  (empty-k jump)
+  (let-k body env k0))
+   
+
+(define-label apply-k
+    (union-case k0* kt
+     [(empty-k jump) (dismount-trampoline jump)]
+     [(if-k conseq alt env k0)
+      (if v*
+          (begin
+            (set! k0* k0)
+            (set! env* env)
+            (set! expr* conseq)          
+        (set! pc value-of))
+          (begin
+            (set! k0* k0)
+            (set! env* env)
+            (set! expr* alt)
+        (set! pc value-of)))]
+     [(mult-k-inner m1 k0)
+      (begin
+        (set! k0* k0)
+        (set! v* (* m1 v*))
+      (set! pc apply-k))]
+     [(mult-k-outter rand2 env k0)
+      (begin
+        (set! k0* (kt_mult-k-inner v* k0))
+        (set! env* env)
+        (set! expr* rand2)
+      (set! pc value-of))]
+     [(sub1-k k0)
+      (begin
+        (set! k0* k0)
+        (set! v* (- v* 1))
+      (set! pc apply-k))]
+     [(zero-k k0)
+      (begin
+        (set! k0* k0)
+        (set! v* (zero? v*))
+      (set! pc apply-k))]
+     [(return-k vexp env)
+      (begin
+        (set! k0* v*)
+        (set! env* env)
+        (set! expr* vexp)
+      (set! pc value-of))]
+     [(rand-k tor k0)
+      (begin
+        (set! k0* k0)
+        (set! a* v*)
+        (set! c* tor)
+      (set! pc apply-closure))]
+     [(rator-k rand env k0)
+      (begin
+        (set! k0* (kt_rand-k v* k0))
+        (set! env* env)
+        (set! expr* rand)
+      (set! pc value-of))]
+    [(let-k body env k0)
+      (begin
+        (set! k0* k0)
+        (set! env* (envr_extend v* env))
+        (set! expr* body)
+      (set! pc value-of))]))
+
+
+(define-label value-of
+     (union-case expr* exp
+      [(const n)
+       (begin
+         (set! k0* k0*)
+         (set! v* n)
+       (set! pc apply-k))]
+      [(var v)
+       (begin
+         (set! k0* k0*)
+         (set! env* env*)
+         (set! num* v)
+       (set! pc apply-env))]
+      [(if test conseq alt)
+       (begin
+         (set! k0* (kt_if-k conseq alt env* k0*))
+         (set! expr* test)
+         (set! env* env*)
+       (set! pc value-of))]
+      [(mult rand1 rand2)
+       (begin
+         (set! k0* (kt_mult-k-outter rand2 env* k0*))
+         (set! env* env*)
+         (set! expr* rand1)      
+       (set! pc value-of))]
+      [(sub1 rand)
+       (begin
+         (set! k0* (kt_sub1-k k0*))
+         (set! expr* rand)
+         (set! env* env*)
+       (set! pc value-of))]
+      [(zero rand)
+       (begin
+         (set! k0* (kt_zero-k k0*))
+         (set! expr* rand)
+         (set! env* env*)
+       (set! pc value-of))]
+      [(capture body)
+       (begin
+         (set! k0* k0*)
+         (set! expr* body)
+         (set! env* (envr_extend k0* env*))
+       (set! pc value-of))]
+      [(return vexp kexp)
+       (begin
+         (set! k0* (kt_return-k vexp env*))
+         (set! env* env*)
+         (set! expr* kexp)
+       (set! pc value-of))]
+      [(let vexp body)
+       (begin
+         (set! k0* (kt_let-k body env* k0*))
+         (set! expr* vexp)
+         (set! env* env*)
+        (set! pc value-of))]
+      [(lambda body)
+       (begin
+         (set! k0* k0*)
+         (set! v* (clos_closure body env*))
+         (set! pc apply-k))]
+      [(app rator rand)
+       (begin
+         (set! k0* (kt_rator-k rand env* k0*))
+         (set! expr* rator)
+         (set! env* env*)
+       (set! pc value-of))]))
+ 
+(define-union envr
+  (empty)
+  (extend arg env))
+ 
+(define-label apply-env
+    (union-case env* envr
+      [(empty) (errorf 'env "unbound variable")]
+      [(extend arg env)
+       (if (zero? num*)
+           (begin
+             (set! k0* k0*)
+             (set! v* arg)
+	    (set! pc apply-k))
+           (begin
+             (set! k0* k0*)
+             (set! num* (sub1 num*))
+             (set! env* env)
+	   (set! pc apply-env)))]))
+ 
+(define-union clos
+  (closure code env))
+ 
+
+(define-label apply-closure
+    (union-case c* clos
+      [(closure code env)
+       (begin
+         (set! k0* k0*)
+         (set! env* (envr_extend a* env))
+         (set! expr* code)
+       (set! pc value-of))]))
+
+(define-label main
+    (begin
+      (set! expr* (exp_app
+	    (exp_lambda
+	     (exp_app
+	      (exp_app (exp_var 0) (exp_var 0))
+	      (exp_const 5)))
+	    (exp_lambda
+	     (exp_lambda
+	      (exp_if (exp_zero (exp_var 0))
+		      (exp_const 1)
+		      (exp_mult (exp_var 0)
+				(exp_app
+				 (exp_app (exp_var 1) (exp_var 1))
+				 (exp_sub1 (exp_var 0)))))))))
+      (set! env* (envr_empty))
+      (set! pc value-of)
+      (mount-trampoline kt_empty-k k0* pc)
+      (pretty-print v*)))
